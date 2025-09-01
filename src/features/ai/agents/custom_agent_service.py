@@ -84,7 +84,8 @@ class CustomAgentService:
             intent=request.intent,
             additionalInformation=request.additionalInformation,
             variables=request.variables or {},
-            customPrompt=enhanced_prompt
+            customPrompt=enhanced_prompt,
+            channels=request.channels or [], 
         )
         
         # Store in Supabase
@@ -282,6 +283,8 @@ CORE INTELLIGENCE (ALWAYS PRESERVED):
             return None
         
         # Update fields
+        if request.channels is not None:
+            agent.channels = request.channels
         if request.name is not None:
             agent.name = request.name
         if request.description is not None:

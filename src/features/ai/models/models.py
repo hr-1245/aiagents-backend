@@ -330,7 +330,11 @@ class CreateAgentRequest(BaseModel):
         default_factory=dict, 
         description="Dynamic variables for templating (e.g., {'business_name': 'Acme Corp', 'support_email': 'help@acme.com'})"
     )
-
+    # Channels (new)
+    channels: Optional[List[str]] = Field(
+        default_factory=list,
+        description="List of channels where the agent is active (e.g., ['web', 'whatsapp', 'slack'])"
+    )
 class UpdateAgentRequest(BaseModel):
     """Request to update an existing custom AI agent."""
     name: Optional[str] = None
@@ -340,6 +344,11 @@ class UpdateAgentRequest(BaseModel):
     additionalInformation: Optional[str] = None
     variables: Optional[Dict[str, str]] = None
     isActive: Optional[bool] = None
+    # Channels (moved here for consistency)
+    channels: Optional[List[str]] = Field(
+        default_factory=list,
+        description="List of channels where the agent is active (e.g., ['web', 'whatsapp', 'slack'])"
+    )
 
 class AgentResponse(BaseModel):
     """Response for agent operations."""
