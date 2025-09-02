@@ -167,7 +167,6 @@ def log_database_operation(operation: str, details: Dict[str, Any], success: boo
         "details": details,
         "timestamp": datetime.now().isoformat()
     })
-
 # Configure metrics for API monitoring - SIMPLE WORKING SOLUTION
 try:
     API_REQUESTS = Counter('api_requests_total', 'Total API requests', ['endpoint'])
@@ -179,14 +178,29 @@ except ValueError as e:
         class DummyMetric:
             def __init__(self, name):
                 self._name = name
+            
             def labels(self, *args, **kwargs):
                 return self
+            
             def inc(self, *args, **kwargs):
                 pass
+            
             def observe(self, *args, **kwargs):
                 pass
+            
             def set(self, *args, **kwargs):
                 pass
+            
+            def time(self):
+                # Add time method that returns a context manager
+                return self
+            
+            def __enter__(self):
+                return self
+            
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                pass
+            
             def __call__(self, *args, **kwargs):
                 return self
         
