@@ -16,9 +16,9 @@ sio_app = socketio.ASGIApp(
 # Register events
 @sio_server.event
 async def connect(sid, environ, auth):
+    token = auth.get("token")
 
-    print(f"🔌 {sid} connected")
-    print(f"Token: ", auth)
+    print(f"🔌 {sid} connected {token}")
 
 
 @sio_server.event
