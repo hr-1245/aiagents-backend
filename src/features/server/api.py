@@ -1,8 +1,9 @@
 from fastapi import APIRouter
 
-from .sockets import chat
+# from sockets import sio_app
 
 # Import all route modules
+from src.features.server.sockets.sockets import sio_app
 from .routes import training, query, summary, suggestions, management, agents
 
 # Create the main router for the conversation API
@@ -17,4 +18,4 @@ router.include_router(management.router, tags=["Management"])
 router.include_router(agents.router, tags=["Custom Agents"])
 
 # ✅ Add WebSocket route (no prefix needed, it’s already /ws/chat inside websocket.py)
-router.include_router(chat.router, tags=["WebSocket"])
+# router.include_router(sockets.router, tags=["WebSocket"])

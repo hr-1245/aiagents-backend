@@ -8,6 +8,7 @@ import os
 import sys
 import signal
 from typing import Dict, Any, Optional
+from src.features.server.sockets.sockets import sio_app
 
 # Set protobuf environment variable early before any imports
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
@@ -63,6 +64,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
 # Import and setup security
 try:
     # Try absolute import first (when running from src directory)
@@ -94,7 +96,6 @@ try:
         expose_headers=cors_config["expose_headers"],
     )
     logger.info("CORS middleware configured")
-
 except Exception as e:
     logger.error(f"Error loading security module: {str(e)}")
     security_loaded = False
@@ -350,151 +351,6 @@ def health_check() -> Dict[str, Any]:
             ),
         },
     }
-
-
-@app.get("/chat", response_class=HTMLResponse)
-def chat_ui():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="utf-8" />
-        <title>VOX AI Chat</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>
-            body {
-                margin: 0;
-                height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background: linear-gradient(135deg,#667eea 0%, #764ba2 100%);
-                font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-            }
-            .chat-container {
-                display: flex;
-                flex-direction: column;
-                background: #fff;
-                border-radius: 16px;
-                box-shadow: 0 8px 32px rgba(0,0,0,.2);
-                width: 100%;
-                max-width: 500px;
-                height: 80vh;
-                overflow: hidden;
-            }
-            .chat-header {
-                padding: 16px;
-                background: #667eea;
-                color: #fff;
-                font-size: 20px;
-                font-weight: bold;
-                text-align: center;
-            }
-            .chat-messages {
-                flex: 1;
-                padding: 16px;
-                overflow-y: auto;
-                background: #f9f9f9;
-            }
-            .message {
-                max-width: 75%;
-                margin-bottom: 12px;
-                padding: 12px 16px;
-                border-radius: 16px;
-                font-size: 15px;
-                line-height: 1.4;
-            }
-            .message.user {
-                background: #667eea;
-                color: white;
-                margin-left: auto;
-                border-bottom-right-radius: 4px;
-            }
-            .message.ai {
-                background: #e5e5ea;
-                color: #333;
-                margin-right: auto;
-                border-bottom-left-radius: 4px;
-            }
-            .chat-input {
-                display: flex;
-                border-top: 1px solid #ddd;
-            }
-            .chat-input input {
-                flex: 1;
-                border: none;
-                padding: 14px;
-                font-size: 15px;
-                outline: none;
-            }
-            .chat-input button {
-                background: #667eea;
-                color: white;
-                border: none;
-                padding: 14px 20px;
-                font-weight: bold;
-                cursor: pointer;
-                transition: background 0.2s;
-            }
-            .chat-input button:hover {
-                background: #5a67d8;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="chat-container">
-            <div class="chat-header">VOX AI Chat</div>
-            <div class="chat-messages" id="messages">
-                <div class="message ai">Hello 👋 I am your VOX assistant. How can I help?</div>
-            </div>
-            <form class="chat-input" onsubmit="sendMessage(event)">
-                <input type="text" id="userInput" placeholder="Type your message..." autocomplete="off" />
-                <button type="submit">Send</button>
-            </form>
-        </div>
-
-        <script>
-    const messages = document.getElementById("messages");
-    const userInput = document.getElementById("userInput");
-
-    // Open WebSocket connection
-    const ws = new WebSocket("ws://localhost:4000/ai/conversation/chat"); // adjust host if needed
-
-    ws.onopen = () => {
-        console.log("✅ Connected to WebSocket server");
-    };
-
-    ws.onmessage = (event) => {
-        appendMessage("🤖 " + event.data, "ai");
-    };
-
-    ws.onclose = () => {
-        appendMessage("⚠️ Disconnected from server", "ai");
-    };
-
-    function appendMessage(text, sender) {
-        const msg = document.createElement("div");
-        msg.classList.add("message", sender);
-        msg.textContent = text;
-        messages.appendChild(msg);
-        messages.scrollTop = messages.scrollHeight;
-    }
-
-  
-function sendMessage(event) {
-    event.preventDefault();
-    const text = userInput.value.trim();
-    if (!text) return;
-
-    appendMessage(text, "user");
-    ws.send(text); // 🔑 goes to backend
-    userInput.value = "";
-}
-</script>
-
-    </body>
-    </html>
-    """
 
 
 if __name__ == "__main__":
