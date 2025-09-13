@@ -1,4 +1,3 @@
-
 import uvicorn
 
 from src.run_server import app, run_server  # import your FastAPI app + runner
@@ -13,3 +12,15 @@ if __name__ == "__main__":
 
     # Option 2 (dev only): directly run with uvicorn
     # uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+
+# from src.run_server import run_server
+
+
+# def main():
+#     print("Hello from vox-backend!")
+#     run_server()
+
+
+# if __name__ == "__main__":
+#     main()

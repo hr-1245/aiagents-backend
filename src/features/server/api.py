@@ -16,6 +16,3 @@ router.include_router(summary.router, tags=["Summary"])
 router.include_router(suggestions.router, tags=["Suggestions"])
 router.include_router(management.router, tags=["Management"])
 router.include_router(agents.router, tags=["Custom Agents"])
-
-# ✅ Add WebSocket route (no prefix needed, it’s already /ws/chat inside websocket.py)
-# router.include_router(sockets.router, tags=["WebSocket"])
