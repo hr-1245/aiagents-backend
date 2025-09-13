@@ -26,4 +26,6 @@ dependencies = [
     "structlog>=25.4.0",
     "supabase>=2.15.2",
     "tenacity>=9.1.2",
+    "python-socketio>=5.11.4",   
+    "uvicorn[standard]", 
 ]
