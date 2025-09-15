@@ -302,6 +302,8 @@ def run_server() -> None:
         sys.exit(1)
 
 
+app.mount("/", sio_app)
+
 @app.get("/health")
 def health_check() -> Dict[str, Any]:
     """Comprehensive health check of the service"""
