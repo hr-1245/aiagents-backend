@@ -94,7 +94,7 @@ async def chat_message(sid, data):
 #     await sio_server.emit("get_all_messages", ghl_response, room=sid)
 
 
-@router.post("https://vox-ai-frontend.onrender.com/webhooks/ghl/message")
+@router.post("/webhooks/ghl/message")
 async def ghl_webhook(request: Request):
     try:
         body = await request.json()
