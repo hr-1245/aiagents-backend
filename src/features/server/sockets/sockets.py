@@ -39,8 +39,8 @@ async def chat_message(sid, data):
     print("new message data: ", data)
 
     payload = {
-        "contactId": "YneAmPjjLo4ONDkhukEv",
-        # "contactId": data["contactId"],
+        # "contactId": "YneAmPjjLo4ONDkhukEv",
+        "contactId": data["contactId"],
         "message": data["message"],
         "type": data["type"],
     }
