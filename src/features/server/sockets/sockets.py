@@ -8,6 +8,7 @@ router = APIRouter()
 GHL_SEND_MESSAGE_ENDPOINT = (
     "https://services.leadconnectorhq.com/conversations/messages"
 )
+GHL_GET_MESSAGE_ENDPOINT = "https://services.leadconnectorhq.com/conversations/messages"
 
 # Create Socket.IO server
 sio_server = socketio.AsyncServer(
@@ -36,10 +37,8 @@ async def disconnect(sid):
 
 @sio_server.event
 async def chat_message(sid, data):
-    print("new message data: ", data)
 
     payload = {
-        # "contactId": "YneAmPjjLo4ONDkhukEv",
         "contactId": data["contactId"],
         "message": data["message"],
         "type": data["type"],
@@ -52,16 +51,30 @@ async def chat_message(sid, data):
     }
 
     async with httpx.AsyncClient(timeout=10) as client:
+        # 1. Send message
         response = await client.post(
             GHL_SEND_MESSAGE_ENDPOINT, headers=headers, json=payload
         )
-        response.raise_for_status()  # 201 Created expected
+        response.raise_for_status()
+        ghl_response = response.json()
 
-    # GHL returns the created message object
-    ghl_response = response.json()
+    # 2. Extract messageId
+    message_id = ghl_response.get("id") or ghl_response.get("messageId")
+    if not message_id:
+        print("⚠️ No messageId found in GHL response:", ghl_response)
+        await sio_server.emit("new_message", ghl_response, room=sid)
+        return
 
-    # Send the GHL reply straight back to the same socket
-    await sio_server.emit("new_message", ghl_response, room=sid)
+    # 3. Fetch single message (new async client context!)
+    async with httpx.AsyncClient(timeout=10) as client:
+        url = f"{GHL_GET_MESSAGE_ENDPOINT}/{message_id}"
+
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        ghl_get_response = response.json()
+
+    # 4. Emit the fetched message
+    await sio_server.emit("new_message", ghl_get_response, room=sid)
 
 
 @router.post("/webhooks/ghl/message")
