@@ -97,14 +97,33 @@ async def chat_message(sid, data):
 @router.post("/webhooks/ghl/message")
 async def ghl_webhook(request: Request):
     try:
+        body_bytes = await request.body()
+        if not body_bytes:
+            print("⚠️ Empty webhook request received")
+            return {"status": "ok", "message": "Empty request ignored"}
+        
         body = await request.json()
         print("📩 Incoming GHL Webhook:", json.dumps(body, indent=2))
 
-        # Emit the incoming message to all connected sockets
-        await sio_server.emit("new_message", body)
+        # Match real payload keys
+        contact_id = body.get("contact_id")
+        conversation_id = body.get("conversationId")  # only if you add it in Custom Data
+        message_text = body.get("message", {}).get("body")
+        message_type = body.get("message", {}).get("type")
 
-        # GHL requires a 200 OK response quickly
+        standardized_payload = {
+            "contactId": contact_id,
+            "conversationId": conversation_id,
+            "message": message_text,
+            "type": message_type,
+        }
+
+        await sio_server.emit("new_message", standardized_payload)
         return {"status": "ok"}
+    
+    except json.JSONDecodeError:
+        print("❌ Invalid JSON received in webhook")
+        return {"status": "error", "message": "Invalid JSON format"}
     except Exception as e:
         print("❌ Webhook error:", e)
         return {"status": "error", "message": str(e)}

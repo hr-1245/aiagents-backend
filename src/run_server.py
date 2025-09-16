@@ -1,7 +1,6 @@
 import uvicorn
-from fastapi import FastAPI, Depends, Request, WebSocket
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 import logging
 from dotenv import load_dotenv
 import os
@@ -28,7 +27,7 @@ if os.name == "nt":
 
 # Import enhanced logging configuration
 try:
-    from .features.server.config import setup_enhanced_logging
+    from src.features.server.config import setup_enhanced_logging
 
     setup_enhanced_logging()
     logger = logging.getLogger(__name__)
@@ -69,7 +68,7 @@ app = FastAPI(
 try:
     # Try absolute import first (when running from src directory)
     try:
-        from features.server.security import (
+        from src.features.server.security import (
             create_cors_config,
             authenticate,
             check_rate_limit,
@@ -197,7 +196,7 @@ if os.environ.get("DEBUG_LOGS", "").lower() == "true":
 try:
     # Try absolute import first (when running from src directory)
     try:
-        from features.server.api import router
+        from src.features.server.api import router
     except ModuleNotFoundError:
         # Try relative import (when running from project root via main.py)
         from src.features.server.api import router
@@ -220,7 +219,7 @@ def check_db_connection() -> bool:
     try:
         # Try absolute import first (when running from src directory)
         try:
-            from features.ai.vector.vector_store import VectorStoreService
+            from src.features.ai.vector.vector_store import VectorStoreService
         except ModuleNotFoundError:
             # Try relative import (when running from project root via main.py)
             from src.features.ai.vector.vector_store import VectorStoreService
@@ -302,7 +301,20 @@ def run_server() -> None:
         sys.exit(1)
 
 
-app.mount("/", sio_app)
+app.mount("/sockets", sio_app)
+
+# Import and include webhook routes
+try:
+    from src.features.server.sockets.sockets import router
+    app.include_router(router)
+    logger.info("Webhook router mounted at /webhooks/ghl/message")
+except Exception as e:
+    logger.error(f"Failed to mount webhook router: {e}")
+
+@app.get("/ping")
+async def ping():
+    """Simple health check endpoint"""
+    return {"status": "ok", "message": "pong"}
 
 @app.get("/health")
 def health_check() -> Dict[str, Any]:
@@ -354,6 +366,16 @@ def health_check() -> Dict[str, Any]:
         },
     }
 
+# Add route logging for debugging
+@app.on_event("startup")
+async def startup_event():
+    # Log all routes for debugging
+    logger.info("=== Mounted Routes ===")
+    for route in app.routes:
+        if hasattr(route, "path"):
+            methods = getattr(route, "methods", ["Unknown"])
+            logger.info(f"{methods} {route.path}")
+    logger.info("======================")
 
 if __name__ == "__main__":
     run_server()
