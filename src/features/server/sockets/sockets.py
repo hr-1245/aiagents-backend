@@ -88,11 +88,9 @@ async def ghl_webhook(request: Request):
         body = await request.json()
         print("📩 Incoming GHL Webhook:", json.dumps(body, indent=2))
 
-        # Match real payload keys
-        contact_id = body.get("contact_id")
-        conversation_id = body.get(
-            "conversationId"
-        )  # only if you add it in Custom Data
+        # Match real payload keys from Customer Replied
+        contact_id = body.get("contact", {}).get("id")
+        conversation_id = body.get("message", {}).get("conversation_id")
         message_text = body.get("message", {}).get("body")
         message_type = body.get("message", {}).get("type")
 
@@ -103,7 +101,10 @@ async def ghl_webhook(request: Request):
             "type": message_type,
         }
 
+        print("✅ Emitting new_message:", standardized_payload)
         await sio_server.emit("new_message", standardized_payload)
+        print("✅ Emitted successfully")
+
         return {"status": "ok"}
 
     except json.JSONDecodeError:
