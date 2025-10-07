@@ -15,7 +15,6 @@ wheels/
 chroma_db/
 
 # IDE-specific
-.vscode/
 .idea/
 *.sublime-workspace
 *.sublime-project
@@ -28,10 +27,10 @@ Thumbs.db
 *.log
 
 # Sensitive data
-.env
 
 # Node modules (if using Node.js)
 node_modules/
 
 # Docker
 *.docker/
+config.bat
