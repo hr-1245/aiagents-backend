@@ -204,6 +204,8 @@ try:
     api_loaded = True
     # Include API routes
     app.include_router(router, prefix="/ai/conversation")
+    app.mount("/", sio_app)
+
     logger.info("API router loaded successfully")
 except Exception as e:
     logger.error(f"Error loading API router: {str(e)}")
@@ -301,20 +303,21 @@ def run_server() -> None:
         sys.exit(1)
 
 
-app.mount("/sockets", sio_app)
-
 # Import and include webhook routes
 try:
     from src.features.server.sockets.sockets import router
+
     app.include_router(router)
     logger.info("Webhook router mounted at /webhooks/ghl/message")
 except Exception as e:
     logger.error(f"Failed to mount webhook router: {e}")
 
+
 @app.get("/ping")
 async def ping():
     """Simple health check endpoint"""
     return {"status": "ok", "message": "pong"}
+
 
 @app.get("/health")
 def health_check() -> Dict[str, Any]:
@@ -366,6 +369,7 @@ def health_check() -> Dict[str, Any]:
         },
     }
 
+
 # Add route logging for debugging
 @app.on_event("startup")
 async def startup_event():
@@ -376,6 +380,7 @@ async def startup_event():
             methods = getattr(route, "methods", ["Unknown"])
             logger.info(f"{methods} {route.path}")
     logger.info("======================")
+
 
 if __name__ == "__main__":
     run_server()

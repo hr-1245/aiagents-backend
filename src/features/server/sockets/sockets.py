@@ -2,6 +2,7 @@ import json
 import socketio
 from fastapi import APIRouter, Request
 import httpx
+from src.features.ai.agents.custom_agent_service import logger
 
 router = APIRouter()
 
@@ -22,17 +23,30 @@ sio_app = socketio.ASGIApp(
     socketio_path="sockets",
 )
 
+# ✅ Store userId → socketId mapping
+connected_clients = {}
 
-# Register events
+
 @sio_server.event
 async def connect(sid, environ):
-    # token = auth.get("token")
-    print(f"🔌 {sid} connected")
+    query = environ.get("QUERY_STRING", "")
+    params = dict(pair.split("=") for pair in query.split("&") if "=" in pair)
+    user_id = params.get("userId")
+
+    if user_id:
+        connected_clients[user_id] = sid
+        logger.info(f"✅ Auto-registered user {user_id} on connect with socket {sid}")
+    else:
+        print(f"⚠️ No userId in connect query for socket {sid}")
 
 
 @sio_server.event
 async def disconnect(sid):
-    print(f"❌ {sid} disconnected")
+    for user_id, s in list(connected_clients.items()):
+        if s == sid:
+            del connected_clients[user_id]
+            print(f"❌ {user_id} disconnected — removed from connected_clients")
+            break
 
 
 @sio_server.event
