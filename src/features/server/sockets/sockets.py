@@ -14,7 +14,8 @@ GHL_GET_MESSAGE_ENDPOINT = "https://services.leadconnectorhq.com/conversations/m
 # Create Socket.IO server
 sio_server = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins=[],
+    # cors_allowed_origins=[],
+    cors_allowed_origins="*",
 )
 
 # Create ASGI app for Socket.IO
@@ -29,6 +30,7 @@ connected_clients = {}
 
 @sio_server.event
 async def connect(sid, environ):
+    print("Incoming connection environ:", environ)
     query = environ.get("QUERY_STRING", "")
     params = dict(pair.split("=") for pair in query.split("&") if "=" in pair)
     user_id = params.get("userId")
