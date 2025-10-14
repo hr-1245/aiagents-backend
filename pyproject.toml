@@ -30,4 +30,5 @@ dependencies = [
     "uvicorn[standard]",
     "pypdf2>=3.0.1",
     "docx>=0.2.4",
+    "pypdf>=6.1.1",
 ]
