@@ -87,6 +87,8 @@ async def chat_message(sid, data):
         response.raise_for_status()
         ghl_get_response = response.json()
 
+    print("ghl_get_response ======> ", ghl_get_response)
+
     # 4. Emit the fetched message
     await sio_server.emit("new_message", ghl_get_response, room=sid)
 
