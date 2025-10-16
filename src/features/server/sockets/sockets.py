@@ -106,14 +106,12 @@ async def ghl_webhook(request: Request):
         print("📩 Incoming GHL Webhook:", json.dumps(body, indent=2))
 
         # Match real payload keys from Customer Replied
-        contact_id = body.get("contact", {}).get("id")
-        conversation_id = body.get("message", {}).get("conversation_id")
+        contact_id = body.get("contact_id")
         message_text = body.get("message", {}).get("body")
         message_type = body.get("message", {}).get("type")
 
         standardized_payload = {
             "contactId": contact_id,
-            "conversationId": conversation_id,
             "message": message_text,
             "type": message_type,
         }
