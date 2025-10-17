@@ -55,6 +55,7 @@ async def chat_message(sid, data):
 
     payload = {
         "contactId": data["contactId"],
+        "phone": data["phone"],
         "message": data["message"],
         "type": data["type"],
     }
@@ -87,6 +88,9 @@ async def chat_message(sid, data):
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         ghl_get_response = response.json()
+
+    # 4️⃣ Inject phone number for frontend consistency
+    ghl_get_response["phone"] = payload["phone"]
 
     print("ghl_get_response ======> ", ghl_get_response)
 
