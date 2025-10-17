@@ -107,11 +107,13 @@ async def ghl_webhook(request: Request):
 
         # Match real payload keys from Customer Replied
         contact_id = body.get("contact_id")
+        phone = body.get("phone")
         message_text = body.get("message", {}).get("body")
         message_type = body.get("message", {}).get("type")
 
         standardized_payload = {
             "contactId": contact_id,
+            "phone": phone,
             "message": message_text,
             "type": message_type,
         }
