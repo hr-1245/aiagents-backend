@@ -120,8 +120,8 @@ async def chat_message(sid, data):
     await sio_server.emit("new_message", ghl_get_response, room=sid)
 
 
-# @router.post("/webhooks/ghl/message")
-@router.post("/test-ghl")
+# @router.post("/test-ghl")
+@router.post("/webhooks/ghl/message")
 async def ghl_webhook(request: Request):
     try:
         print("\n🚀 [Webhook] GHL message received")
