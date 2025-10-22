@@ -308,7 +308,6 @@ try:
     from src.features.server.sockets.sockets import router
 
     app.include_router(router)
-    logger.info("Webhook router mounted at /webhooks/ghl/message")
 except Exception as e:
     logger.error(f"Failed to mount webhook router: {e}")
 

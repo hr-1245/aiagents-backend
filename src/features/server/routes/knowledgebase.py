@@ -6,8 +6,10 @@ from openai import AsyncOpenAI
 import chromadb
 import os
 from src.features.ai.agents.custom_agent_service import logger
-import aiohttp, bs4, re
+import aiohttp, bs4
 from pypdf import PdfReader
+from typing import Optional
+import uuid
 
 router = APIRouter()
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -19,7 +21,7 @@ chroma_client = chromadb.PersistentClient(path=PERSIST_DIRECTORY)
 class FileTrainingRequest(BaseModel):
     userId: str
     knowledgebaseId: str
-    fileId: str
+    fileId: Optional[str] = None
     fileName: str
     fileType: str
     fileSize: int
@@ -94,6 +96,10 @@ async def train_supabase_file(
     body: FileTrainingRequest, authorization: str = Header(...)
 ):
     try:
+        logger.info(
+            f"Starting file training for user_id={body.userId}, file={body.fileName}"
+        )
+
         # Emit start
         await emit_progress(
             body.userId,
@@ -104,23 +110,36 @@ async def train_supabase_file(
                 "fileName": body.fileName,
             },
         )
+        logger.info(f"Emitted start event for file={body.fileName}")
+
+        if not body.fileId:
+            body.fileId = str(uuid.uuid4())
 
         # Download file temporarily
         temp_path = f"/tmp/{body.fileName}"
+        logger.info(f"Downloading file from URL: {body.fileUrl} to {temp_path}")
         async with aiohttp.ClientSession() as session:
             async with session.get(body.fileUrl) as resp:
                 if resp.status != 200:
+                    logger.error(f"Failed to download file. Status: {resp.status}")
                     raise HTTPException(
                         status_code=400, detail="Failed to download file."
                     )
                 with open(temp_path, "wb") as f:
-                    f.write(await resp.read())
+                    content = await resp.read()
+                    f.write(content)
+                    logger.info(
+                        f"File downloaded successfully, size={len(content)} bytes"
+                    )
 
         # Extract text
+        logger.info(f"Extracting text from {temp_path}")
         text = extract_text_from_pdf(temp_path)
+        logger.info(f"Extracted text length: {len(text)} characters")
 
         splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
         chunks = splitter.split_text(text)
+        logger.info(f"Split text into {len(chunks)} chunks")
 
         await emit_progress(
             body.userId,
@@ -131,9 +150,12 @@ async def train_supabase_file(
                 "message": f"Split into {len(chunks)} chunks.",
             },
         )
+        logger.info(f"Emitted chunking progress for {body.fileName}")
 
-        # 2️⃣ Embedding
+        # Embedding
+        logger.info(f"Retrieving/creating Chroma collection: {body.knowledgebaseId}")
         collection = chroma_client.get_or_create_collection(name=body.knowledgebaseId)
+        logger.info(f"Collection ready: {collection.name}")
 
         for idx, chunk in enumerate(chunks):
             emb_resp = await client.embeddings.create(
@@ -148,7 +170,9 @@ async def train_supabase_file(
                 ids=[f"{body.fileId}_{idx}"],
             )
 
-            if idx % 5 == 0:  # update every few chunks
+            logger.info(f"Embedded chunk {idx + 1}/{len(chunks)} for {body.fileName}")
+
+            if idx % 5 == 0:
                 await emit_progress(
                     body.userId,
                     "file_status",
@@ -158,8 +182,9 @@ async def train_supabase_file(
                         "message": f"Embedding chunk {idx + 1}/{len(chunks)}...",
                     },
                 )
+                logger.info(f"Emitted embedding progress for chunk {idx + 1}")
 
-        # 3️⃣ Completed
+        # Completed
         await emit_progress(
             body.userId,
             "file_status",
@@ -169,17 +194,18 @@ async def train_supabase_file(
                 "fileName": body.fileName,
             },
         )
+        logger.info(f"✅ Completed processing for {body.fileName}")
 
         return {"success": True}
 
     except Exception as e:
+        logger.exception(f"Error during file processing for {body.fileName}: {e}")
         await emit_progress(
             body.userId,
             "file_status",
             {
                 "status": "error",
                 "message": str(e),
-                # "fileName": body.fileName,
             },
         )
         raise HTTPException(status_code=500, detail=f"File processing failed: {e}")
@@ -362,6 +388,7 @@ async def train_faqs(body: FaqTrainingRequest, authorization: str = Header(...))
             },
         )
         raise HTTPException(status_code=500, detail=f"FAQ processing failed: {e}")
+
 
 @router.post("/kb/query")
 async def query_kb(req: QueryRequest):
