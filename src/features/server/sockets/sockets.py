@@ -338,8 +338,8 @@ async def chat_message(sid, data):
 
 
 # ----- Webhook endpoint (updated) -----
-# @router.post("/webhooks/ghl/message")
-@router.post("/test-ghl")
+@router.post("/webhooks/ghl/message")
+# @router.post("/test-ghl")
 async def ghl_webhook(request: Request):
     try:
         print("\n🚀 [Webhook] GHL message received")
