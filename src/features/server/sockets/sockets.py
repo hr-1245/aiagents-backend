@@ -1,4 +1,5 @@
 import json
+import re
 import socketio
 from fastapi import APIRouter, Request
 import httpx
@@ -441,18 +442,41 @@ async def _process_ai_and_send(
             return {"status": "ok", "message": "No tag provided"}
 
         print(f"🔍 [DB] Searching for AI agent with tag: '{ghl_tag}' ...")
+
+        # Split incoming tags by comma or dot
+        tags = [t.strip() for t in re.split(r"[,.]", ghl_tag) if t.strip()]
+
         response = supabase.table("ai_agents").select("*").execute()
         all_agents = response.data or []
-        print(f"📦 [DB] Found total {len(all_agents)} agents in database")
 
-        matching_agents = [
-            agent for agent in all_agents if agent.get("data", {}).get("tag") == ghl_tag
-        ]
-        print(f"🎯 [DB] Matched {len(matching_agents)} agent(s) with tag '{ghl_tag}'")
+        matching_agents = []
+        for tag in tags:
+            print(f"🔍 Checking agents for tag: '{tag}'")
+
+            # Find agents with current tag
+            matching_agents = [
+                agent for agent in all_agents if agent.get("data", {}).get("tag") == tag
+            ]
+
+            if matching_agents:
+                print(
+                    f"🎯 Found {len(matching_agents)} agent(s) for tag '{tag}' — stopping further checks."
+                )
+                break  # Stop after finding matches for first valid tag
 
         if not matching_agents:
-            print("⚠️ [_process_ai_and_send] No agent found with this tag")
-            return {"status": "ok", "message": "No matching agent found"}
+            print("⚠️ No matching agents found for any tag.")
+
+        # print(f"📦 [DB] Found total {len(all_agents)} agents in database")
+
+        # matching_agents = [
+        #     agent for agent in all_agents if agent.get("data", {}).get("tag") == ghl_tag
+        # ]
+        # print(f"🎯 [DB] Matched {len(matching_agents)} agent(s) with tag '{ghl_tag}'")
+
+        # if not matching_agents:
+        #     print("⚠️ [_process_ai_and_send] No agent found with this tag")
+        #     return {"status": "ok", "message": "No matching agent found"}
 
         agent = matching_agents[0]
         print(
