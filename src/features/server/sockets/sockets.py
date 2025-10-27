@@ -48,7 +48,7 @@ _latest_tag: dict = {}
 _active_tasks: dict = {}
 
 # Debounce delay in seconds
-DEBOUNCE_SECONDS = 5
+DEBOUNCE_SECONDS = 10
 
 # Create Socket.IO server
 sio_server = socketio.AsyncServer(
