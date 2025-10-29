@@ -138,8 +138,8 @@ async def chat_message(sid, data):
 
 
 # ----- Webhook endpoint (GHL) -----
-@router.post("/webhooks/ghl/message")
-# @router.post("/test-ghl")
+# @router.post("/webhooks/ghl/message")
+@router.post("/test-ghl")
 async def ghl_webhook(request: Request):
     try:
         # print("\n🚀 [Webhook] GHL message received")
@@ -156,10 +156,17 @@ async def ghl_webhook(request: Request):
         # --- 2️⃣ Extract core fields ---
         contact_id = body.get("contact_id")
         phone = body.get("phone")
-        message_text = body.get("message", {}).get("body")
-        message_type = body.get("message", {}).get("type")
         ghl_tag = body.get("tags")
         location_id = body.get("location", {}).get("id")
+        message_obj = body.get("message", {}) or {}
+        message_text = message_obj.get("body")
+        message_type = message_obj.get("type")
+
+        # Map message type → channel (19 = WhatsApp, others = SMS)
+        if message_type == 19:
+            incoming_channel = "WhatsApp"
+        else:
+            incoming_channel = "SMS"
 
         # print(
         #     f"🧩 [Extracted] contact_id={contact_id}, phone={phone}, tag={ghl_tag}, message={message_text}"
@@ -185,6 +192,16 @@ async def ghl_webhook(request: Request):
         # ----- Debounce buffering logic (NEW) -----
         # Append message_text into pending buffer
         _pending_messages[contact_id].append(message_text)
+
+        # Save user message in Supabase
+        supabase.table("messages").insert(
+            {
+                "contact_id": contact_id,
+                "role": "user",
+                "content": message_text,
+            }
+        ).execute()
+
         # Keep latest phone and tag for when we process
         _latest_phone[contact_id] = phone
         _latest_tag[contact_id] = ghl_tag
@@ -206,7 +223,9 @@ async def ghl_webhook(request: Request):
                 print(f"⚠️ [Debounce] Error cancelling task for {contact_id}: {e}")
 
         # Start a new debounce task
-        task = asyncio.create_task(_debounced_process(contact_id, location_id))
+        task = asyncio.create_task(
+            _debounced_process(contact_id, location_id, incoming_channel)
+        )
         _active_tasks[contact_id] = task
         print(
             f"⏱️ [Debounce] Started debounce task for {contact_id} (waiting {DEBOUNCE_SECONDS}s)"
@@ -223,7 +242,7 @@ async def ghl_webhook(request: Request):
 
 
 # ----- Debounce worker -----
-async def _debounced_process(contact_id: str, location_id: str):
+async def _debounced_process(contact_id: str, location_id: str, incoming_channel: str):
     """
     Waits DEBOUNCE_SECONDS since last schedule, then processes all buffered
     messages for the contact as a single combined message.
@@ -256,7 +275,7 @@ async def _debounced_process(contact_id: str, location_id: str):
 
         # Call the original AI + send flow
         await _process_ai_and_send(
-            contact_id, phone, combined_text, ghl_tag, location_id
+            contact_id, phone, combined_text, ghl_tag, location_id, incoming_channel
         )
 
     except Exception as e:
@@ -267,7 +286,12 @@ async def _debounced_process(contact_id: str, location_id: str):
 
 # ----- Helper: the AI + send-to-GHL flow (refactored from your original code) -----
 async def _process_ai_and_send(
-    contact_id: str, phone: str, message_text: str, ghl_tag, location_id: str
+    contact_id: str,
+    phone: str,
+    message_text: str,
+    ghl_tag,
+    location_id: str,
+    incoming_channel: str,
 ):
     """
     Process incoming message, generate AI reply, and send to GHL across all enabled agent channels.
@@ -294,6 +318,19 @@ async def _process_ai_and_send(
             return {"status": "ok", "message": "No matching agent found"}
 
         agent = matching_agents[0]
+
+        # Fetch the last 6 messages for context (3 user + 3 assistant, adjustable)
+        history_resp = (
+            supabase.table("messages")
+            .select("role, content")
+            .eq("contact_id", contact_id)
+            .order("timestamp", desc=True)
+            .limit(6)
+            .execute()
+        )
+        history_data = history_resp.data or []
+        # Reverse so older messages come first
+        history_data = list(reversed(history_data))
 
         # Prepare AI configuration
         agent_name = agent.get("name", "AI Assistant")
@@ -332,50 +369,147 @@ async def _process_ai_and_send(
         else:
             print("ℹ️ [KB] No KBs found for this agent — fallback mode")
 
-        # Generate AI Reply (unchanged)
-        if not retrieved_docs:
-            fallback_prompt = f"""
-            You are {agent_name}.
-            Personality: {agent_personality}
-            Intent: {agent_intent}
+        # --- Build chat context from Supabase ---
+        history_resp = (
+            supabase.table("messages")
+            .select("role, content")
+            .eq("contact_id", contact_id)
+            .order("timestamp", desc=True)
+            .limit(6)
+            .execute()
+        )
+        history_data = history_resp.data or []
+        chat_history = [
+            {"role": m["role"], "content": m["content"]} for m in reversed(history_data)
+        ]
 
-            User said: {message_text}
+        # --- Build base system + user prompt ---
+        system_message = {"role": "system", "content": agent_personality}
 
-            Respond naturally, warmly, and helpfully.
-            """
-            completion = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": agent_personality},
-                    {"role": "user", "content": fallback_prompt},
-                ],
-                temperature=temperature,
-            )
-            reply = completion.choices[0].message.content
-        else:
+        if retrieved_docs:
+            # KB context available
             context = "\n\n".join(retrieved_docs[:10])
-            context_prompt = f"""
-            You are {agent_name}.
-            Personality: {agent_personality}
-            Intent: {agent_intent}
+            user_message = {
+                "role": "user",
+                "content": f"""
+        You are {agent_name}.
+        Personality: {agent_personality}
+        Intent: {agent_intent}
 
-            Use the following KB context to reply precisely and factually.
+        Use the following knowledge base context to reply precisely and factually.
 
-            Context:
-            {context}
+        Context:
+        {context}
 
-            User query:
-            {message_text}
-            """
-            completion = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": agent_personality},
-                    {"role": "user", "content": context_prompt},
-                ],
-                temperature=temperature,
-            )
-            reply = completion.choices[0].message.content
+        User query:
+        {message_text}
+        """,
+            }
+        else:
+            # No KB context — fallback mode
+            user_message = {
+                "role": "user",
+                "content": f"""
+        You are {agent_name}.
+        Personality: {agent_personality}
+        Intent: {agent_intent}
+
+        User said: {message_text}
+
+        Respond naturally, warmly, and helpfully.
+        """,
+            }
+
+        # --- Generate AI reply with context ---
+        completion = await client.chat.completions.create(
+            model=model,
+            messages=[system_message, *chat_history, user_message],
+            temperature=temperature,
+        )
+        reply = completion.choices[0].message.content
+
+        # --- Save AI reply in Supabase ---
+        supabase.table("messages").insert(
+            {
+                "contact_id": contact_id,
+                "role": "assistant",
+                "content": reply,
+            }
+        ).execute()
+
+        # Generate AI Reply (unchanged)
+        # if not retrieved_docs:
+        #     fallback_prompt = f"""
+        #     You are {agent_name}.
+        #     Personality: {agent_personality}
+        #     Intent: {agent_intent}
+
+        #     User said: {message_text}
+
+        #     Respond naturally, warmly, and helpfully.
+        #     """
+
+        #     chat_history = [
+        #         {"role": m["role"], "content": m["content"]} for m in history_data
+        #     ]
+
+        #     completion = await client.chat.completions.create(
+        #         model=model,
+        #         messages=[
+        #             {"role": "system", "content": agent_personality},
+        #             *chat_history,  # recent context
+        #             {"role": "user", "content": message_text},  # current query
+        #         ],
+        #         # messages=[
+        #         #     {"role": "system", "content": agent_personality},
+        #         #     {"role": "user", "content": fallback_prompt},
+        #         # ],
+        #         temperature=temperature,
+        #     )
+        #     reply = completion.choices[0].message.content
+
+        #     # Store assistant reply in Supabase
+        #     supabase.table("messages").insert(
+        #         {
+        #             "contact_id": contact_id,
+        #             "role": "assistant",
+        #             "content": reply,
+        #         }
+        #     ).execute()
+
+        # else:
+        #     context = "\n\n".join(retrieved_docs[:10])
+        #     context_prompt = f"""
+        #     You are {agent_name}.
+        #     Personality: {agent_personality}
+        #     Intent: {agent_intent}
+
+        #     Use the following KB context to reply precisely and factually.
+
+        #     Context:
+        #     {context}
+
+        #     User query:
+        #     {message_text}
+        #     """
+        #     completion = await client.chat.completions.create(
+        #         model=model,
+        #         messages=[
+        #             {"role": "system", "content": agent_personality},
+        #             {"role": "user", "content": context_prompt},
+        #         ],
+        #         temperature=temperature,
+        #     )
+        #     reply = completion.choices[0].message.content
+
+        #     # Store assistant reply in Supabase
+        #     supabase.table("messages").insert(
+        #         {
+        #             "contact_id": contact_id,
+        #             "role": "assistant",
+        #             "content": reply,
+        #         }
+        #     ).execute()
 
         # --- Prepare to send to GHL across enabled channels ---
 
@@ -402,6 +536,8 @@ async def _process_ai_and_send(
         provider = token_response.data
         access_token = provider.get("token") if provider else None
 
+        print("access_token =======> ", access_token)
+
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
@@ -409,53 +545,57 @@ async def _process_ai_and_send(
         }
 
         # Determine channels from agent or fallback to whatsapp
-        agent_channels = agent.get("channels") or {}
-        enabled_channel_keys = []
-        if agent_channels:
-            for key, cfg in agent_channels.items():
-                try:
-                    if isinstance(cfg, dict) and cfg.get("enabled"):
-                        enabled_channel_keys.append(key)
-                except Exception:
-                    # defensive: if cfg is weird type, skip
-                    continue
+        # agent_channels = agent.get("channels") or {}
+        # enabled_channel_keys = []
+        # if agent_channels:
+        #     for key, cfg in agent_channels.items():
+        #         try:
+        #             if isinstance(cfg, dict) and cfg.get("enabled"):
+        #                 enabled_channel_keys.append(key)
+        #         except Exception:
+        #             # defensive: if cfg is weird type, skip
+        #             continue
 
         # fallback behavior: if no enabled channels detected, send via WhatsApp (legacy behavior)
-        if not enabled_channel_keys:
-            enabled_channel_keys = ["whatsapp"]
+        # if not enabled_channel_keys:
+        #     enabled_channel_keys = ["whatsapp"]
 
         send_results = []
         async with httpx.AsyncClient(timeout=10) as http_client:
-            for ch_key in enabled_channel_keys:
-                ghl_type = CHANNEL_TYPE_MAP.get(ch_key.lower(), "WhatsApp")
-                print("ghl_type =============================> ", ghl_type)
-                reply_payload = {
-                    "contactId": contact_id,
-                    "phone": phone,
-                    "message": reply,
-                    "type": ghl_type,
-                }
+            print("ghl_type =============================> ", incoming_channel)
+            reply_payload = {
+                "contactId": contact_id,
+                "phone": phone,
+                "message": reply,
+                "type": incoming_channel,
+            }
 
-                try:
-                    resp = await http_client.post(
-                        GHL_SEND_MESSAGE_ENDPOINT, headers=headers, json=reply_payload
-                    )
-                    resp.raise_for_status()
-                    send_results.append(
-                        {
-                            "channel": ch_key,
-                            "status": "sent",
-                            "http_status": resp.status_code,
-                        }
-                    )
-                    # emit socket for each channel so frontends can react per-channel
-                    await sio_server.emit("new_message", reply_payload)
-                except Exception as send_err:
-                    # Log error but continue with other channels
-                    print(f"❌ [GHL:{ch_key}] Error sending message: {str(send_err)}")
-                    send_results.append(
-                        {"channel": ch_key, "status": "error", "error": str(send_err)}
-                    )
+            try:
+                resp = await http_client.post(
+                    GHL_SEND_MESSAGE_ENDPOINT, headers=headers, json=reply_payload
+                )
+                resp.raise_for_status()
+                send_results.append(
+                    {
+                        "channel": incoming_channel,
+                        "status": "sent",
+                        "http_status": resp.status_code,
+                    }
+                )
+                # emit socket for each channel so frontends can react per-channel
+                await sio_server.emit("new_message", reply_payload)
+            except Exception as send_err:
+                # Log error but continue with other channels
+                print(
+                    f"❌ [GHL:{incoming_channel}] Error sending message: {str(send_err)}"
+                )
+                send_results.append(
+                    {
+                        "channel": incoming_channel,
+                        "status": "error",
+                        "error": str(send_err),
+                    }
+                )
 
         # Return aggregated result so caller can understand what happened across channels
         return {"status": "ok", "autoReply": reply, "send_results": send_results}
