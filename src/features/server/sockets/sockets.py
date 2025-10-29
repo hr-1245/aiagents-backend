@@ -192,16 +192,16 @@ async def ghl_webhook(request: Request):
         # If there's an existing active debounce task for this contact, cancel it
         existing_task = _active_tasks.get(contact_id)
 
-        print(
-            "============================= existing_task =============================> ",
-            existing_task,
-        )
+        # print(
+        #     "============================= existing_task =============================> ",
+        #     existing_task,
+        # )
         if existing_task and not existing_task.done():
             try:
                 existing_task.cancel()
-                print(
-                    f"🔁 [Debounce] Cancelled existing debounce task for {contact_id}"
-                )
+                # print(
+                #     f"🔁 [Debounce] Cancelled existing debounce task for {contact_id}"
+                # )
             except Exception as e:
                 print(f"⚠️ [Debounce] Error cancelling task for {contact_id}: {e}")
 
@@ -222,218 +222,7 @@ async def ghl_webhook(request: Request):
         return {"status": "error", "message": str(e)}
 
 
-# ----- Helper: the AI + send-to-GHL flow (refactored from your original code) -----
-async def _process_ai_and_send(
-    contact_id: str, phone: str, message_text: str, ghl_tag, location_id: str
-):
-    """
-    This function contains the existing logic you had for:
-      - matching agent
-      - preparing AI config
-      - embeddings, KB query
-      - chat completion
-      - send reply to GHL
-    It is adapted to accept the combined message_text.
-    """
-    try:
-        # print(
-        #     f"\n🚀 [_process_ai_and_send] Processing messages for contact {contact_id}"
-        # )
-        # --- Match agent using tag ---
-        if not ghl_tag:
-            # print("⚠️ [_process_ai_and_send] No tag provided — cannot match agent")
-            return {"status": "ok", "message": "No tag provided"}
-
-        # print(f"🔍 [DB] Searching for AI agent with tag: '{ghl_tag}' ...")
-
-        # Split incoming tags by comma or dot
-        tags = [t.strip() for t in re.split(r"[,.]", ghl_tag) if t.strip()]
-
-        response = supabase.table("ai_agents").select("*").execute()
-        all_agents = response.data or []
-
-        matching_agents = []
-        for tag in tags:
-            # print(f"🔍 Checking agents for tag: '{tag}'")
-
-            # Find agents with current tag
-            matching_agents = [
-                agent for agent in all_agents if agent.get("data", {}).get("tag") == tag
-            ]
-
-            if matching_agents:
-                # print(
-                #     f"🎯 Found {len(matching_agents)} agent(s) for tag '{tag}' — stopping further checks."
-                # )
-                break  # Stop after finding matches for first valid tag
-
-        # if not matching_agents:
-        #     print("⚠️ No matching agents found for any tag.")
-
-        # print(f"📦 [DB] Found total {len(all_agents)} agents in database")
-
-        # matching_agents = [
-        #     agent for agent in all_agents if agent.get("data", {}).get("tag") == ghl_tag
-        # ]
-        # print(f"🎯 [DB] Matched {len(matching_agents)} agent(s) with tag '{ghl_tag}'")
-
-        # if not matching_agents:
-        #     print("⚠️ [_process_ai_and_send] No agent found with this tag")
-        #     return {"status": "ok", "message": "No matching agent found"}
-
-        agent = matching_agents[0]
-        # print(
-        #     f"🤖 [Agent] Selected agent → {agent.get('name')} (ID: {agent.get('id')})"
-        # )
-
-        # Prepare AI configuration
-        agent_name = agent.get("name", "AI Assistant")
-        agent_personality = agent.get(
-            "system_prompt", "You are a helpful AI assistant."
-        )
-        agent_intent = agent.get("intent", "Assist the user helpfully.")
-        response_config = agent.get("responseConfig", {}) or {}
-
-        model = response_config.get("model", "gpt-4o-mini")
-        temperature = response_config.get("temperature", 0.7)
-        kb_ids = agent.get("knowledge_base_ids", [])
-
-        # print(f"⚙️ [AI Config] model={model}, temperature={temperature}, KBs={kb_ids}")
-
-        # Create embedding for message
-        # print("🧬 [Embedding] Generating embedding for incoming message...")
-        embedding = await client.embeddings.create(
-            input=message_text,
-            model="text-embedding-3-small",
-            encoding_format="float",
-        )
-        query_vector = embedding.data[0].embedding
-        # print("✅ [Embedding] Embedding generated successfully")
-
-        # Query Knowledge Base
-        retrieved_docs = []
-        if kb_ids:
-            # print(f"📚 [KB] Querying {len(kb_ids)} knowledge base(s)...")
-            for kb_id in kb_ids:
-                try:
-                    collection = chroma_client.get_or_create_collection(name=kb_id)
-                    # print(f"➡️ [KB] Checking collection '{kb_id}' ...")
-                    results = collection.query(
-                        query_embeddings=[query_vector], n_results=5
-                    )
-
-                    if results and results.get("documents"):
-                        docs = results["documents"][0]
-                        retrieved_docs.extend(docs)
-                        # print(
-                        #     f"✅ [KB] Retrieved {len(docs)} documents from KB {kb_id}"
-                        # )
-                    else:
-                        print(f"⚠️ [KB] No documents found in KB {kb_id}")
-                except Exception as chroma_err:
-                    print(f"❌ [KB] Error querying KB {kb_id}: {str(chroma_err)}")
-        else:
-            print("ℹ️ [KB] No KBs found for this agent — fallback mode")
-
-        # Generate AI Reply
-        # print("🧠 [AI] Generating AI response...")
-        if not retrieved_docs:
-            fallback_prompt = f"""
-            You are {agent_name}.
-            Personality: {agent_personality}
-            Intent: {agent_intent}
-
-            User said: {message_text}
-
-            Respond naturally, warmly, and helpfully.
-            """
-            completion = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": agent_personality},
-                    {"role": "user", "content": fallback_prompt},
-                ],
-                temperature=temperature,
-            )
-            reply = completion.choices[0].message.content
-            # print("💬 [AI] Generated fallback response successfully")
-        else:
-            context = "\n\n".join(retrieved_docs[:10])
-            context_prompt = f"""
-            You are {agent_name}.
-            Personality: {agent_personality}
-            Intent: {agent_intent}
-
-            Use the following KB context to reply precisely and factually.
-
-            Context:
-            {context}
-
-            User query:
-            {message_text}
-            """
-            completion = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": agent_personality},
-                    {"role": "user", "content": context_prompt},
-                ],
-                temperature=temperature,
-            )
-            reply = completion.choices[0].message.content
-            # print("💬 [AI] Generated contextual response successfully")
-
-        # Emit auto-reply (send to GHL)
-        reply_payload = {
-            "contactId": contact_id,
-            "phone": phone,
-            "message": reply,
-            "type": "WhatsApp",
-        }
-
-        token_response = (
-            supabase.table("provider_data")
-            .select("token")
-            .eq("location_id", location_id)
-            .single()
-            .execute()
-        )
-        provider = token_response.data
-        access_token = provider.get("token") if provider else None
-
-        # print("access_token ===================================> ", access_token)
-
-        headers = {
-            # Keep your existing headers — tokens, etc.
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-            "Version": "2021-04-15",
-        }
-
-        async with httpx.AsyncClient(timeout=10) as http_client:
-            response = await http_client.post(
-                GHL_SEND_MESSAGE_ENDPOINT, headers=headers, json=reply_payload
-            )
-            response.raise_for_status()
-            # print(f"📤 [GHL] Sent auto-reply message to GHL for contact {contact_id}")
-
-        # print(f"🚀 [Emit] Sending auto reply via socket: {reply_payload}")
-        await sio_server.emit("new_message", reply_payload)
-
-        # print("✅ [_process_ai_and_send] Auto reply emitted successfully")
-        # print("===============================================================")
-
-        return {"status": "ok", "autoReply": reply}
-
-    except Exception as e:
-        # print("❌ [_process_ai_and_send] Error:", str(e))
-
-        # print(traceback.format_exc())
-        return {"status": "error", "message": str(e)}
-
-    # ----- Debounce worker -----
-
-
+# ----- Debounce worker -----
 async def _debounced_process(contact_id: str, location_id: str):
     """
     Waits DEBOUNCE_SECONDS since last schedule, then processes all buffered
@@ -474,3 +263,411 @@ async def _debounced_process(contact_id: str, location_id: str):
         # print(f"❌ [_debounced_process] Error while processing {contact_id}: {e}")
 
         print(traceback.format_exc())
+
+
+# ----- Helper: the AI + send-to-GHL flow (refactored from your original code) -----
+async def _process_ai_and_send(
+    contact_id: str, phone: str, message_text: str, ghl_tag, location_id: str
+):
+    """
+    Process incoming message, generate AI reply, and send to GHL across all enabled agent channels.
+    """
+    try:
+        if not ghl_tag:
+            return {"status": "ok", "message": "No tag provided"}
+
+        # --- match agent (same as before) ---
+        tags = [t.strip() for t in re.split(r"[,.]", ghl_tag) if t.strip()]
+
+        response = supabase.table("ai_agents").select("*").execute()
+        all_agents = response.data or []
+
+        matching_agents = []
+        for tag in tags:
+            matching_agents = [
+                agent for agent in all_agents if agent.get("data", {}).get("tag") == tag
+            ]
+            if matching_agents:
+                break
+
+        if not matching_agents:
+            return {"status": "ok", "message": "No matching agent found"}
+
+        agent = matching_agents[0]
+
+        # Prepare AI configuration
+        agent_name = agent.get("name", "AI Assistant")
+        agent_personality = agent.get(
+            "system_prompt", "You are a helpful AI assistant."
+        )
+        agent_intent = agent.get("intent", "Assist the user helpfully.")
+        response_config = agent.get("responseConfig", {}) or {}
+
+        model = response_config.get("model", "gpt-4o-mini")
+        temperature = response_config.get("temperature", 0.7)
+        kb_ids = agent.get("knowledge_base_ids", [])
+
+        # Create embedding for message
+        embedding = await client.embeddings.create(
+            input=message_text,
+            model="text-embedding-3-small",
+            encoding_format="float",
+        )
+        query_vector = embedding.data[0].embedding
+
+        # Query Knowledge Base (same logic)
+        retrieved_docs = []
+        if kb_ids:
+            for kb_id in kb_ids:
+                try:
+                    collection = chroma_client.get_or_create_collection(name=kb_id)
+                    results = collection.query(
+                        query_embeddings=[query_vector], n_results=5
+                    )
+                    if results and results.get("documents"):
+                        docs = results["documents"][0]
+                        retrieved_docs.extend(docs)
+                except Exception as chroma_err:
+                    print(f"❌ [KB] Error querying KB {kb_id}: {str(chroma_err)}")
+        else:
+            print("ℹ️ [KB] No KBs found for this agent — fallback mode")
+
+        # Generate AI Reply (unchanged)
+        if not retrieved_docs:
+            fallback_prompt = f"""
+            You are {agent_name}.
+            Personality: {agent_personality}
+            Intent: {agent_intent}
+
+            User said: {message_text}
+
+            Respond naturally, warmly, and helpfully.
+            """
+            completion = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": agent_personality},
+                    {"role": "user", "content": fallback_prompt},
+                ],
+                temperature=temperature,
+            )
+            reply = completion.choices[0].message.content
+        else:
+            context = "\n\n".join(retrieved_docs[:10])
+            context_prompt = f"""
+            You are {agent_name}.
+            Personality: {agent_personality}
+            Intent: {agent_intent}
+
+            Use the following KB context to reply precisely and factually.
+
+            Context:
+            {context}
+
+            User query:
+            {message_text}
+            """
+            completion = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": agent_personality},
+                    {"role": "user", "content": context_prompt},
+                ],
+                temperature=temperature,
+            )
+            reply = completion.choices[0].message.content
+
+        # --- Prepare to send to GHL across enabled channels ---
+
+        # Map your internal channel keys to the GHL 'type' values the API expects.
+        # Adjust mapping if your GHL expects different type strings.
+        CHANNEL_TYPE_MAP = {
+            "whatsapp": "WhatsApp",
+            "sms": "SMS",
+            "email": "Email",
+            "facebook": "Facebook",
+            "instagram": "Instagram",
+            # "web": "Web",
+            # "gmb": "GMB",
+        }
+
+        # Get provider token (same as before)
+        token_response = (
+            supabase.table("provider_data")
+            .select("token")
+            .eq("location_id", location_id)
+            .single()
+            .execute()
+        )
+        provider = token_response.data
+        access_token = provider.get("token") if provider else None
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Version": "2021-04-15",
+        }
+
+        # Determine channels from agent or fallback to whatsapp
+        agent_channels = agent.get("channels") or {}
+        enabled_channel_keys = []
+        if agent_channels:
+            for key, cfg in agent_channels.items():
+                try:
+                    if isinstance(cfg, dict) and cfg.get("enabled"):
+                        enabled_channel_keys.append(key)
+                except Exception:
+                    # defensive: if cfg is weird type, skip
+                    continue
+
+        # fallback behavior: if no enabled channels detected, send via WhatsApp (legacy behavior)
+        if not enabled_channel_keys:
+            enabled_channel_keys = ["whatsapp"]
+
+        send_results = []
+        async with httpx.AsyncClient(timeout=10) as http_client:
+            for ch_key in enabled_channel_keys:
+                ghl_type = CHANNEL_TYPE_MAP.get(ch_key.lower(), "WhatsApp")
+                print("ghl_type =============================> ", ghl_type)
+                reply_payload = {
+                    "contactId": contact_id,
+                    "phone": phone,
+                    "message": reply,
+                    "type": ghl_type,
+                }
+
+                try:
+                    resp = await http_client.post(
+                        GHL_SEND_MESSAGE_ENDPOINT, headers=headers, json=reply_payload
+                    )
+                    resp.raise_for_status()
+                    send_results.append(
+                        {
+                            "channel": ch_key,
+                            "status": "sent",
+                            "http_status": resp.status_code,
+                        }
+                    )
+                    # emit socket for each channel so frontends can react per-channel
+                    await sio_server.emit("new_message", reply_payload)
+                except Exception as send_err:
+                    # Log error but continue with other channels
+                    print(f"❌ [GHL:{ch_key}] Error sending message: {str(send_err)}")
+                    send_results.append(
+                        {"channel": ch_key, "status": "error", "error": str(send_err)}
+                    )
+
+        # Return aggregated result so caller can understand what happened across channels
+        return {"status": "ok", "autoReply": reply, "send_results": send_results}
+
+    except Exception as e:
+        print("❌ [_process_ai_and_send] Error:", str(e))
+        return {"status": "error", "message": str(e)}
+
+
+# async def _process_ai_and_send(
+#     contact_id: str, phone: str, message_text: str, ghl_tag, location_id: str
+# ):
+#     """
+#     This function contains the existing logic you had for:
+#       - matching agent
+#       - preparing AI config
+#       - embeddings, KB query
+#       - chat completion
+#       - send reply to GHL
+#     It is adapted to accept the combined message_text.
+#     """
+#     try:
+#         # print(
+#         #     f"\n🚀 [_process_ai_and_send] Processing messages for contact {contact_id}"
+#         # )
+#         # --- Match agent using tag ---
+#         if not ghl_tag:
+#             # print("⚠️ [_process_ai_and_send] No tag provided — cannot match agent")
+#             return {"status": "ok", "message": "No tag provided"}
+
+#         # print(f"🔍 [DB] Searching for AI agent with tag: '{ghl_tag}' ...")
+
+#         # Split incoming tags by comma or dot
+#         tags = [t.strip() for t in re.split(r"[,.]", ghl_tag) if t.strip()]
+
+#         response = supabase.table("ai_agents").select("*").execute()
+#         all_agents = response.data or []
+
+#         matching_agents = []
+#         for tag in tags:
+#             # print(f"🔍 Checking agents for tag: '{tag}'")
+
+#             # Find agents with current tag
+#             matching_agents = [
+#                 agent for agent in all_agents if agent.get("data", {}).get("tag") == tag
+#             ]
+
+#             if matching_agents:
+#                 # print(
+#                 #     f"🎯 Found {len(matching_agents)} agent(s) for tag '{tag}' — stopping further checks."
+#                 # )
+#                 break  # Stop after finding matches for first valid tag
+
+#         # if not matching_agents:
+#         #     print("⚠️ No matching agents found for any tag.")
+
+#         # print(f"📦 [DB] Found total {len(all_agents)} agents in database")
+
+#         # matching_agents = [
+#         #     agent for agent in all_agents if agent.get("data", {}).get("tag") == ghl_tag
+#         # ]
+#         # print(f"🎯 [DB] Matched {len(matching_agents)} agent(s) with tag '{ghl_tag}'")
+
+#         # if not matching_agents:
+#         #     print("⚠️ [_process_ai_and_send] No agent found with this tag")
+#         #     return {"status": "ok", "message": "No matching agent found"}
+
+#         agent = matching_agents[0]
+#         # print(f"🤖 [Agent] Selected agent → {agent})")
+
+#         # Prepare AI configuration
+#         agent_name = agent.get("name", "AI Assistant")
+#         agent_personality = agent.get(
+#             "system_prompt", "You are a helpful AI assistant."
+#         )
+#         agent_intent = agent.get("intent", "Assist the user helpfully.")
+#         response_config = agent.get("responseConfig", {}) or {}
+
+#         model = response_config.get("model", "gpt-4o-mini")
+#         temperature = response_config.get("temperature", 0.7)
+#         kb_ids = agent.get("knowledge_base_ids", [])
+
+#         # print(f"⚙️ [AI Config] model={model}, temperature={temperature}, KBs={kb_ids}")
+
+#         # Create embedding for message
+#         # print("🧬 [Embedding] Generating embedding for incoming message...")
+#         embedding = await client.embeddings.create(
+#             input=message_text,
+#             model="text-embedding-3-small",
+#             encoding_format="float",
+#         )
+#         query_vector = embedding.data[0].embedding
+#         # print("✅ [Embedding] Embedding generated successfully")
+
+#         # Query Knowledge Base
+#         retrieved_docs = []
+#         if kb_ids:
+#             # print(f"📚 [KB] Querying {len(kb_ids)} knowledge base(s)...")
+#             for kb_id in kb_ids:
+#                 try:
+#                     collection = chroma_client.get_or_create_collection(name=kb_id)
+#                     # print(f"➡️ [KB] Checking collection '{kb_id}' ...")
+#                     results = collection.query(
+#                         query_embeddings=[query_vector], n_results=5
+#                     )
+
+#                     if results and results.get("documents"):
+#                         docs = results["documents"][0]
+#                         retrieved_docs.extend(docs)
+#                         # print(
+#                         #     f"✅ [KB] Retrieved {len(docs)} documents from KB {kb_id}"
+#                         # )
+#                     else:
+#                         print(f"⚠️ [KB] No documents found in KB {kb_id}")
+#                 except Exception as chroma_err:
+#                     print(f"❌ [KB] Error querying KB {kb_id}: {str(chroma_err)}")
+#         else:
+#             print("ℹ️ [KB] No KBs found for this agent — fallback mode")
+
+#         # Generate AI Reply
+#         # print("🧠 [AI] Generating AI response...")
+#         if not retrieved_docs:
+#             fallback_prompt = f"""
+#             You are {agent_name}.
+#             Personality: {agent_personality}
+#             Intent: {agent_intent}
+
+#             User said: {message_text}
+
+#             Respond naturally, warmly, and helpfully.
+#             """
+#             completion = await client.chat.completions.create(
+#                 model=model,
+#                 messages=[
+#                     {"role": "system", "content": agent_personality},
+#                     {"role": "user", "content": fallback_prompt},
+#                 ],
+#                 temperature=temperature,
+#             )
+#             reply = completion.choices[0].message.content
+#             # print("💬 [AI] Generated fallback response successfully")
+#         else:
+#             context = "\n\n".join(retrieved_docs[:10])
+#             context_prompt = f"""
+#             You are {agent_name}.
+#             Personality: {agent_personality}
+#             Intent: {agent_intent}
+
+#             Use the following KB context to reply precisely and factually.
+
+#             Context:
+#             {context}
+
+#             User query:
+#             {message_text}
+#             """
+#             completion = await client.chat.completions.create(
+#                 model=model,
+#                 messages=[
+#                     {"role": "system", "content": agent_personality},
+#                     {"role": "user", "content": context_prompt},
+#                 ],
+#                 temperature=temperature,
+#             )
+#             reply = completion.choices[0].message.content
+#             # print("💬 [AI] Generated contextual response successfully")
+
+#         # Emit auto-reply (send to GHL)
+#         reply_payload = {
+#             "contactId": contact_id,
+#             "phone": phone,
+#             "message": reply,
+#             "type": "WhatsApp",
+#         }
+
+#         token_response = (
+#             supabase.table("provider_data")
+#             .select("token")
+#             .eq("location_id", location_id)
+#             .single()
+#             .execute()
+#         )
+#         provider = token_response.data
+#         access_token = provider.get("token") if provider else None
+
+#         # print("access_token ===================================> ", access_token)
+
+#         headers = {
+#             # Keep your existing headers — tokens, etc.
+#             "Authorization": f"Bearer {access_token}",
+#             "Content-Type": "application/json",
+#             "Version": "2021-04-15",
+#         }
+
+#         print("reply_payload ===================================> ", reply_payload)
+#         async with httpx.AsyncClient(timeout=10) as http_client:
+#             response = await http_client.post(
+#                 GHL_SEND_MESSAGE_ENDPOINT, headers=headers, json=reply_payload
+#             )
+#             response.raise_for_status()
+#             # print(f"📤 [GHL] Sent auto-reply message to GHL for contact {contact_id}")
+
+#         # print(f"🚀 [Emit] Sending auto reply via socket: {reply_payload}")
+#         await sio_server.emit("new_message", reply_payload)
+
+#         # print("✅ [_process_ai_and_send] Auto reply emitted successfully")
+#         # print("===============================================================")
+
+#         return {"status": "ok", "autoReply": reply}
+
+#     except Exception as e:
+#         # print("❌ [_process_ai_and_send] Error:", str(e))
+
+#         # print(traceback.format_exc())
+#         return {"status": "error", "message": str(e)}
